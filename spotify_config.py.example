@@ -1,0 +1,30 @@
+# Spotify API Configuration Template
+# 
+# INSTRUCTIONS:
+# 1. Rename this file to: spotify_config.py
+# 2. Get your credentials from: https://developer.spotify.com/dashboard
+# 3. Replace the placeholder values below with your actual credentials
+# 4. NEVER commit the actual spotify_config.py file to Git!
+
+SPOTIFY_CLIENT_ID = "your_client_id_here"
+SPOTIFY_CLIENT_SECRET = "your_client_secret_here"
+SPOTIFY_REDIRECT_URI = "http://localhost:8888/callback"
+
+# How to get credentials:
+# 
+# 1. Go to https://developer.spotify.com/dashboard
+# 2. Log in with your Spotify account
+# 3. Click "Create App"
+# 4. Fill in:
+#    - App name: "Hand Controlled Music Player"
+#    - App description: "Gesture-based music controller"
+#    - Redirect URI: http://localhost:8888/callback
+# 5. Click "Save"
+# 6. Copy Client ID and Client Secret
+# 7. Paste them above (keep the quotes)
+# 8. Save this file as: spotify_config.py
+# 
+# Security Notes:
+# - The .gitignore file automatically excludes spotify_config.py
+# - Never share your Client Secret publicly
+# - Spotify Premium account required for playback control
