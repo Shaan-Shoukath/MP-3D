@@ -34,32 +34,39 @@ import random           # Random - String animation patterns
 try:
     import spotipy
     from spotipy.oauth2 import SpotifyOAuth
-    from spotify_config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI
+    from spotify_config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, SPOTIFY_MODE
     SPOTIFY_AVAILABLE = True
 except ImportError:
     print("⚠️  Spotipy not installed. Install with: pip install spotipy")
     SPOTIFY_AVAILABLE = False
+    SPOTIFY_MODE = "free"
 except Exception as e:
     print(f"⚠️  Spotify config error: {e}")
     SPOTIFY_AVAILABLE = False
+    SPOTIFY_MODE = "free"
 
 # ================== MUSIC MANAGER MODULE ================== #
 class MusicManager:
     """
-    Music Playback Manager - Spotify Integration
+    Music Playback Manager - Spotify Integration with Free/Premium Support
     
     Manages Spotify playback, metadata fetching, and playback state
+    Supports both Free and Premium accounts with automatic detection
     
     Attributes:
         sp (Spotipy): Spotify API client
         current_song (dict): Current track metadata
         is_playing (bool): Playback state
+        is_premium (bool): Whether user has Premium account
+        mode (str): Account mode - "free", "premium", or "auto"
     """
     def __init__(self):
         """Initialize Spotify connection"""
         self.sp = None
         self.current_song = None
         self.is_playing = False
+        self.is_premium = False
+        self.mode = SPOTIFY_MODE
         self.last_update = 0
         
         if SPOTIFY_AVAILABLE:
@@ -76,7 +83,6 @@ class MusicManager:
         Requires:
         - Spotify app open and playing
         - Valid credentials in spotify_config.py
-        - Spotify Premium account
         """
         print("🔄 Connecting to Spotify...")
         
@@ -90,7 +96,7 @@ class MusicManager:
             open_browser=True
         ))
         
-        # Verify connection
+        # Verify connection and detect account type
         current = self.sp.current_playback()
         if current and current.get('item'):
             self.is_playing = current.get('is_playing', False)
@@ -99,9 +105,44 @@ class MusicManager:
             print(f"✅ Connected to Spotify")
             print(f"📱 Device: {device_name}")
             print(f"🎵 Playing: {self.current_song['name']} - {self.current_song['artist']}")
+            
+            # Detect Premium status
+            if self.mode == "auto":
+                self.detect_premium_status()
+            elif self.mode == "premium":
+                self.is_premium = True
+                print("🌟 Mode: PREMIUM (Full control enabled)")
+            else:
+                self.is_premium = False
+                print("📊 Mode: FREE (Display-only, no playback control)")
         else:
             print("⚠️  No active playback. Please start playing a track in Spotify.")
             self.is_playing = False
+    
+    def detect_premium_status(self):
+        """
+        Auto-detect if user has Spotify Premium by testing playback control
+        """
+        try:
+            # Try to get current volume (Premium-only feature)
+            current = self.sp.current_playback()
+            if current and 'device' in current:
+                volume = current['device'].get('volume_percent')
+                if volume is not None:
+                    self.is_premium = True
+                    print("🌟 Account: PREMIUM detected - Full controls enabled")
+                    print("   ✓ Gesture controls: Volume, Next, Previous")
+                else:
+                    self.is_premium = False
+                    print("📊 Account: FREE detected - Display mode only")
+                    print("   ℹ️  Upgrade to Premium for gesture controls")
+            else:
+                self.is_premium = False
+                print("📊 Mode: FREE (Could not detect Premium status)")
+        except Exception as e:
+            self.is_premium = False
+            print("📊 Account: FREE (Premium detection failed)")
+            print("   ℹ️  Gestures disabled - Spotify Premium required for playback control")
     
     def update_playback_state(self):
         """Update current playback information from Spotify"""
@@ -119,9 +160,21 @@ class MusicManager:
             current = self.sp.current_playback()
             if current and current.get('item'):
                 self.is_playing = current.get('is_playing', False)
-                self.current_song = self.get_spotify_metadata()
+                new_song = self.get_spotify_metadata()
+                
+                # Only log if song changed
+                if self.current_song and new_song['name'] != self.current_song.get('name'):
+                    print(f"🔄 Track changed: {new_song['name']} - {new_song['artist']}")
+                
+                self.current_song = new_song
+            else:
+                self.is_playing = False
+                if self.current_song is None or self.current_song.get('name') != 'No Track Playing':
+                    print("⏸️  Playback stopped or no active device")
+                    self.current_song = {'name': 'No Track Playing', 'artist': 'Start Spotify', 'is_playing': False}
         except Exception as e:
-            print(f"⚠️  Playback update error: {e}")
+            # Silently handle playback updates (not critical)
+            pass
     
     def get_spotify_metadata(self):
         """
@@ -137,7 +190,7 @@ class MusicManager:
             current = self.sp.current_playback()
             if current and current.get('item'):
                 item = current['item']
-                return {
+                track_info = {
                     'name': item['name'],
                     'artist': item['artists'][0]['name'],
                     'album': item['album']['name'],
@@ -145,35 +198,65 @@ class MusicManager:
                     'progress': current.get('progress_ms', 0),
                     'is_playing': current.get('is_playing', False)
                 }
+                print(f"📀 Now playing: {track_info['name']} - {track_info['artist']}")
+                return track_info
+            else:
+                print("⚠️  No track currently playing in Spotify")
+                return {'name': 'No Track Playing', 'artist': 'Start Spotify', 'is_playing': False}
         except Exception as e:
             print(f"⚠️  Metadata fetch error: {e}")
-        
-        return {'name': 'Unknown', 'artist': 'Unknown', 'is_playing': False}
+            return {'name': 'Error', 'artist': 'Check Spotify', 'is_playing': False}
     
     def next_track(self):
-        """Skip to next track (Spotify)"""
+        """Skip to next track (Spotify) - Premium only"""
+        if not self.is_premium:
+            print("⚠️  Next track requires Spotify Premium")
+            return False
+            
         if self.sp:
             try:
                 self.sp.next_track()
                 print("⏭️  Next track")
                 time.sleep(0.3)  # Wait for Spotify to update
                 self.update_playback_state()
+                return True
             except Exception as e:
-                print(f"❌ Next track error: {e}")
+                if "PREMIUM_REQUIRED" in str(e):
+                    print("⚠️  Spotify Premium required for playback control")
+                    self.is_premium = False  # Update status
+                else:
+                    print(f"❌ Next track error: {e}")
+                return False
+        return False
     
     def prev_track(self):
-        """Go to previous track (Spotify)"""
+        """Go to previous track (Spotify) - Premium only"""
+        if not self.is_premium:
+            print("⚠️  Previous track requires Spotify Premium")
+            return False
+            
         if self.sp:
             try:
                 self.sp.previous_track()
                 print("⏮️  Previous track")
                 time.sleep(0.3)  # Wait for Spotify to update
                 self.update_playback_state()
+                return True
             except Exception as e:
-                print(f"❌ Previous track error: {e}")
+                if "PREMIUM_REQUIRED" in str(e):
+                    print("⚠️  Spotify Premium required for playback control")
+                    self.is_premium = False  # Update status
+                else:
+                    print(f"❌ Previous track error: {e}")
+                return False
+        return False
     
     def volume_up(self):
-        """Increase volume by 10%"""
+        """Increase volume by 10% - Premium only"""
+        if not self.is_premium:
+            print("⚠️  Volume control requires Spotify Premium")
+            return False
+            
         if self.sp:
             try:
                 current = self.sp.current_playback()
@@ -182,11 +265,22 @@ class MusicManager:
                     new_vol = min(current_vol + 10, 100)
                     self.sp.volume(new_vol)
                     print(f"🔊 Volume: {new_vol}%")
+                    return True
             except Exception as e:
-                print(f"❌ Volume up error: {e}")
+                if "PREMIUM_REQUIRED" in str(e):
+                    print("⚠️  Spotify Premium required for volume control")
+                    self.is_premium = False  # Update status
+                else:
+                    print(f"❌ Volume up error: {e}")
+                return False
+        return False
     
     def volume_down(self):
-        """Decrease volume by 10%"""
+        """Decrease volume by 10% - Premium only"""
+        if not self.is_premium:
+            print("⚠️  Volume control requires Spotify Premium")
+            return False
+            
         if self.sp:
             try:
                 current = self.sp.current_playback()
@@ -195,19 +289,32 @@ class MusicManager:
                     new_vol = max(current_vol - 10, 0)
                     self.sp.volume(new_vol)
                     print(f"🔉 Volume: {new_vol}%")
+                    return True
             except Exception as e:
-                print(f"❌ Volume down error: {e}")
+                if "PREMIUM_REQUIRED" in str(e):
+                    print("⚠️  Spotify Premium required for volume control")
+                    self.is_premium = False  # Update status
+                else:
+                    print(f"❌ Volume down error: {e}")
+                return False
+        return False
     
     def get_current_song_name(self):
         """Get current song name"""
         if self.current_song:
-            return self.current_song.get('name', 'Unknown')
+            name = self.current_song.get('name', 'Unknown')
+            print(f"🎵 Displaying song: {name}")  # Debug output
+            return name
+        print("⚠️  No current_song data")  # Debug output
         return 'No Track'
     
     def get_current_artist_name(self):
         """Get current artist name"""
         if self.current_song:
-            return self.current_song.get('artist', 'Unknown')
+            artist = self.current_song.get('artist', 'Unknown')
+            print(f"🎤 Displaying artist: {artist}")  # Debug output
+            return artist
+        print("⚠️  No current_song data for artist")  # Debug output
         return 'No Artist'
 
 # ================== AUDIO SETUP ================== #
@@ -305,10 +412,11 @@ last_gesture_time = 0         # Timestamp of last gesture (prevents rapid repeat
 previous_hand_position = None # Previous palm position for movement detection
 
 # Puck tuning parameters
-GESTURE_COOLDOWN = 0.5          # Minimum seconds between gestures (prevents accidental spam)
+GESTURE_COOLDOWN = 0.4          # Reduced for faster response
 PUCK_POSITION_SMOOTHING = 0.15  # Position smoothing factor (0.0-1.0)
-GESTURE_THRESHOLD = 0.12        # Minimum hand extension to trigger gesture (0.0-1.0)
-MOVEMENT_THRESHOLD = 0.05       # Minimum hand movement to count as gesture (not static)
+GESTURE_THRESHOLD = 0.10        # Lowered for easier detection
+MOVEMENT_THRESHOLD = 0.03       # Reduced - less movement needed to trigger
+DIRECTION_DOMINANCE = 1.3       # Reduced from 1.5 - less strict directional requirement
 
 # ================== ANIMATED STRINGS INSIDE CUBE ================== #
 # Strings that flow through the cube when music is playing
@@ -423,9 +531,10 @@ def detect_hand_direction(landmarks, previous_position=None):
     """
     Detect directional hand gestures (UP/DOWN/LEFT/RIGHT) for puck controls
     
-    Analyzes hand landmark positions to determine if user is making a
-    directional gesture. Requires actual hand movement to prevent false
-    triggers when hand is stationary.
+    Optimized for better recognition with multiple detection methods:
+    1. Index finger tip direction (primary)
+    2. Hand movement vector (secondary)
+    3. Palm orientation (tertiary)
     
     Gesture Mappings:
         UP    (↑): Volume increase (index finger points up)
@@ -439,54 +548,69 @@ def detect_hand_direction(landmarks, previous_position=None):
     
     Returns:
         tuple: (detected_direction, current_palm_position)
-               - detected_direction: "UP"/"DOWN"/"LEFT"/"RIGHT" or None
-               - current_palm_position: NumPy array [x, y] for next frame
-    
-    Algorithm:
-        1. Calculate vector from wrist to index finger tip
-        2. Check if hand has moved (not static)
-        3. Determine dominant direction (horizontal vs vertical)
-        4. Apply threshold to confirm intentional gesture
     """
     # Extract key landmark positions (normalized 0.0-1.0 coordinates)
-    wrist = np.array([landmarks[0].x, landmarks[0].y])       # Landmark 0: Wrist base
-    index_tip = np.array([landmarks[8].x, landmarks[8].y])   # Landmark 8: Index finger tip
+    wrist = np.array([landmarks[0].x, landmarks[0].y])              # Landmark 0: Wrist base
+    index_tip = np.array([landmarks[8].x, landmarks[8].y])          # Landmark 8: Index finger tip
+    index_mcp = np.array([landmarks[5].x, landmarks[5].y])          # Landmark 5: Index finger base
+    middle_tip = np.array([landmarks[12].x, landmarks[12].y])       # Landmark 12: Middle finger tip
+    palm_center = np.array([landmarks[9].x, landmarks[9].y])        # Landmark 9: Palm center
     
-    # Get current palm center position (middle finger base)
-    palm_center = np.array([landmarks[9].x, landmarks[9].y]) # Landmark 9: Palm center
-    
-    # Movement detection: Prevent false triggers from stationary hand
+    # Movement detection: Check if hand is actually moving
     if previous_position is not None:
-        # Calculate Euclidean distance between current and previous palm position
         movement = np.linalg.norm(palm_center - previous_position)
         
         if movement < MOVEMENT_THRESHOLD:
             # Hand is too static - no gesture detected
             return None, palm_center
     
-    # Calculate direction vector from wrist to index finger tip
-    # This represents where the hand is "pointing"
-    direction = index_tip - wrist
+    # Method 1: Index finger direction from wrist (primary method)
+    finger_direction = index_tip - wrist
+    
+    # Method 2: Index finger pointing direction (from base to tip)
+    pointing_direction = index_tip - index_mcp
+    
+    # Method 3: Average of both methods for more stability
+    combined_direction = (finger_direction + pointing_direction * 1.5) / 2.5
     
     # Analyze direction vector components
-    abs_x = abs(direction[0])  # Horizontal component magnitude
-    abs_y = abs(direction[1])  # Vertical component magnitude
+    abs_x = abs(combined_direction[0])  # Horizontal component magnitude
+    abs_y = abs(combined_direction[1])  # Vertical component magnitude
     
-    # Determine primary direction with strict thresholds
-    # Require 1.5x dominance to avoid diagonal confusion
+    # Determine primary direction with optimized thresholds
     detected_direction = None
     
-    if abs_x > abs_y * 1.5:  # Horizontal movement is dominant
-        if direction[0] > GESTURE_THRESHOLD:
+    # Check if gesture meets minimum threshold
+    magnitude = np.linalg.norm(combined_direction)
+    if magnitude < GESTURE_THRESHOLD:
+        return None, palm_center
+    
+    # Determine direction based on dominant axis
+    if abs_x > abs_y * DIRECTION_DOMINANCE:  # Horizontal movement is clearly dominant
+        if combined_direction[0] > GESTURE_THRESHOLD * 0.7:
             detected_direction = "RIGHT"  # Hand pointing right
-        elif direction[0] < -GESTURE_THRESHOLD:
+        elif combined_direction[0] < -GESTURE_THRESHOLD * 0.7:
             detected_direction = "LEFT"   # Hand pointing left
             
-    elif abs_y > abs_x * 1.5:  # Vertical movement is dominant
-        if direction[1] > GESTURE_THRESHOLD:
+    elif abs_y > abs_x * DIRECTION_DOMINANCE:  # Vertical movement is clearly dominant
+        if combined_direction[1] > GESTURE_THRESHOLD * 0.7:
             detected_direction = "DOWN"   # Hand pointing down
-        elif direction[1] < -GESTURE_THRESHOLD:
+        elif combined_direction[1] < -GESTURE_THRESHOLD * 0.7:
             detected_direction = "UP"     # Hand pointing up
+    
+    # If still unclear, try simple method with just index tip direction
+    if detected_direction is None and magnitude > GESTURE_THRESHOLD * 1.2:
+        # More lenient check for strong gestures
+        if abs_x > abs_y:
+            if finger_direction[0] > GESTURE_THRESHOLD * 0.5:
+                detected_direction = "RIGHT"
+            elif finger_direction[0] < -GESTURE_THRESHOLD * 0.5:
+                detected_direction = "LEFT"
+        else:
+            if finger_direction[1] > GESTURE_THRESHOLD * 0.5:
+                detected_direction = "DOWN"
+            elif finger_direction[1] < -GESTURE_THRESHOLD * 0.5:
+                detected_direction = "UP"
     
     # Return detected direction and current position for next frame comparison
     return detected_direction, palm_center
@@ -892,7 +1016,7 @@ while running:
                 puck_position[0] = hand_screen_x
                 puck_position[1] = hand_screen_y
                 
-                # Detect gestures with movement check
+                # Detect gestures with optimized movement check
                 direction, current_palm = detect_hand_direction(landmarks, previous_hand_position)
                 previous_hand_position = current_palm  # Update for next frame
                 
@@ -903,6 +1027,10 @@ while running:
                     last_gesture_time = current_time
                     
                     # Execute control actions with Spotify integration
+                    # Show gesture detection feedback
+                    gesture_symbols = {"UP": "↑", "DOWN": "↓", "LEFT": "←", "RIGHT": "→"}
+                    print(f"🎯 Gesture detected: {gesture_symbols.get(direction, '')} {direction}")
+                    
                     if direction == "UP":
                         music_manager.volume_up()
                     elif direction == "DOWN":
@@ -959,6 +1087,40 @@ while running:
     screen.blit(left_label, (divider_x // 2 - left_label.get_width() // 2, 15))
     screen.blit(right_bg, (divider_x + divider_x // 2 - right_label.get_width() // 2 - 10, 10))
     screen.blit(right_label, (divider_x + divider_x // 2 - right_label.get_width() // 2, 15))
+    
+    # Display Spotify account mode indicator
+    if music_manager.sp:
+        mode_font = pygame.font.SysFont('Arial', 12, bold=True)
+        if music_manager.is_premium:
+            mode_text = "🌟 PREMIUM MODE"
+            mode_color = (100, 255, 100)  # Green
+        else:
+            mode_text = "📊 FREE MODE (Display Only)"
+            mode_color = (255, 200, 100)  # Orange
+        
+        mode_label = mode_font.render(mode_text, True, mode_color)
+        mode_bg = pygame.Surface((mode_label.get_width() + 20, 25), pygame.SRCALPHA)
+        mode_bg.fill((0, 0, 0, 150))
+        
+        mode_x = WIDTH - mode_label.get_width() - 30
+        mode_y = HEIGHT - 35
+        
+        screen.blit(mode_bg, (mode_x - 10, mode_y - 5))
+        screen.blit(mode_label, (mode_x, mode_y))
+        
+        # If free mode, show upgrade message when gesture is attempted
+        if not music_manager.is_premium and active_control:
+            upgrade_font = pygame.font.SysFont('Arial', 14, bold=True)
+            upgrade_text = "⚠️  Gesture controls require Spotify Premium"
+            upgrade_label = upgrade_font.render(upgrade_text, True, (255, 100, 100))
+            upgrade_bg = pygame.Surface((upgrade_label.get_width() + 30, 35), pygame.SRCALPHA)
+            upgrade_bg.fill((50, 0, 0, 200))
+            
+            upgrade_x = WIDTH // 2 - upgrade_label.get_width() // 2
+            upgrade_y = HEIGHT - 100
+            
+            screen.blit(upgrade_bg, (upgrade_x - 15, upgrade_y - 10))
+            screen.blit(upgrade_label, (upgrade_x, upgrade_y))
 
     # Draw the 3D cube with smoothed rotation at smoothed hand position
     # Pass is_playing state to enable/disable animated strings
